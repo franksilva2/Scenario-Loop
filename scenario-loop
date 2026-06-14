@@ -1,0 +1,112 @@
+# -*- coding: utf-8 -*-
+import dataiku
+import pandas as pd, numpy as np
+from dataiku import pandasutils as pdu
+from datetime import datetime
+
+
+###############################################
+# Get Run Table & Current Metric Tables
+###############################################
+# Run List - Table of Countries
+run_list = dataiku.Dataset("run_list")
+run_list_df = run_list.get_dataframe()
+    
+# Add Info Column for tracking output
+run_list_df["run_info"] = None
+
+# Metric List - all metrics to Create
+metric_loop_2 = dataiku.Dataset("metric_loop_2")
+metric_loop_2_df = metric_loop_2.get_dataframe()
+
+
+###############################################
+# Get Project, Folder & Scenarios
+###############################################
+# Get Current Project 
+client = dataiku.api_client()
+project = client.get_project(dataiku.default_project_key())
+
+# Get Clear Old Output Scenario
+scenario_clear_out= project.get_scenario("CLEARPREVIOUSRUNOUTPUT")
+
+# Get Data Prep Scenario ID
+scenario_prep= project.get_scenario("RUNDATAPREP")
+
+# Get Measure Scenario ID
+scenario_metrics = project.get_scenario("CALCMEASURESLOOP")
+
+###############################################
+# Set timestamp to indentify current run
+###############################################
+# Set Run Id Time variable
+variables = project.get_variables()
+variables["local"]["run_id"] = str(int(datetime.now().timestamp()))
+project.set_variables(variables)        
+
+###############################################
+# Clean Folders from previous runs
+###############################################
+run_result_clear = scenario_clear_out.run_and_wait()
+        
+# Create Blank Run Results
+results = []
+
+
+###############################################
+# Run Scenarios for each Country
+###############################################
+# Loop through each Row in the Run List data
+for run_idx, run_row in run_list_df.iterrows():
+    # Get Current Project Varaibles
+    variables = project.get_variables()
+    
+    #Update Vars based on Run List
+    variables["local"]["country"] = str(run_row["Country"])
+    variables["local"]["min_year"] = int(run_row["min_year"])
+    variables["local"]["max_year"] = int(run_row["max_year"])
+    project.set_variables(variables)
+
+    #Print Run List Variables Selected
+    print(str(run_row["Country"]))
+    print(int(run_row["min_year"]))
+    print(int(run_row["max_year"]))
+    
+    
+    # Run Scenario Prep for each Row in Run List Data
+    run_result = scenario_prep.run_and_wait()
+    
+    # Store Results
+    results.append({
+            "country": run_row["Country"],
+            "metric": "",
+            "run_info": run_result.get_info()
+    })
+    
+
+###############################################
+# Nested Run Scenarios for each Metric for each Country
+###############################################
+#Loop through each row in Metrics Data    
+    for metric_idx, metric_row in metric_loop_2_df.iterrows():
+
+        variables = project.get_variables()
+
+        #Update Metric project variable
+        variables["local"]["metric_name"] = str(metric_row["metric"])
+        project.set_variables(variables)
+        
+        print(str(metric_row["metric"]))
+
+        metrics_result = scenario_metrics.run_and_wait()
+        
+        # Store Results
+        results.append({
+            "country": run_row["Country"],
+            "metric": metric_row["metric"],
+            "run_info": metrics_result.get_info()
+        })
+    
+Run_Summary_df = pd.DataFrame(results)
+Run_Summary = dataiku.Dataset("Run_Summary")
+Run_Summary.write_with_schema(Run_Summary_df)
